@@ -69,7 +69,13 @@ local make_callback = function(rhs, is_expr)
     end
   elseif type(rhs) == 'string' then
     if not is_expr then
-      callback = function() feedkeys(rhs) end
+      callback = function()
+        local count = ''
+        if vim.v.count == vim.v.count1 then
+          count = vim.v.count
+        end
+        feedkeys(count .. rhs)
+      end
     else
       callback = function() feedkeys(vim.api.nvim_eval(rhs)) end
     end
@@ -165,15 +171,19 @@ M.setup = function(user_config)
       if type(modes) == 'string' then modes = { modes } end
       for _, mode in ipairs(modes) do
         local prev = vim.fn.maparg(lhs, mode, false, true)
-        if prev.buffer == 1 then goto continue end
+        if prev.buffer == 1 then
+          goto continue
+        end
+
         local rhs = prev.callback or prev.rhs or lhs
+
         local map_opts = {
           silent = prev.silent == 1 or nil,
           remap = prev.noremap == 0 or nil,
           script = prev.script == 1 or nil,
-          -- expr = prev.expr == 1 or nil,
           nowait = prev.nowait == 1 or nil,
         }
+
         local callback = make_callback(rhs, prev.expr == 1)
         vim.keymap.set(mode, lhs, callback, map_opts)
       end
