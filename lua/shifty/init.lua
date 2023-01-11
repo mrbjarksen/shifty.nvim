@@ -10,98 +10,117 @@ local config = {
   embedded = {
     enabled = true,
     mappings = {
-      ['<<'] = 'n',
-      ['>>'] = 'n',
+      -- NOTE: These include `<<` and `>>`
+      ['<'] = { 'n', 'x' },
+      ['>'] = { 'n', 'x' },
+
       ['<Tab>'] = 'i',
       ['<C-I>'] = 'i',
       ['<C-T>'] = 'i',
       ['<C-D>'] = 'i',
+
+      -- FIX: These do not work well with nvim-autopairs
+      ['<BS>'] = 'i',
+      ['<C-H>'] = 'i',
+
+      ['<CR>'] = 'i',
+      ['o'] = 'n',
+      ['O'] = 'n',
     },
     ts_to_ft = {}
   },
 }
 
-local with_opts = function(opts, func)
-  local optionset_is_ignored = vim.tbl_contains(vim.opt.eventignore:get(), 'OptionSet')
+local is_in_op_pend = function()
+  local mode = vim.api.nvim_get_mode().mode
+  return mode:sub(1, 2) == 'no'
+end
+
+local with_opts = function(opts, callback, ...)
+  local prev_eventignore = vim.opt.eventignore:get()
 
   -- Set desired options (without triggering OptionSet)
-  if not optionset_is_ignored then
-    vim.opt.eventignore:append('OptionSet')
-  end
+  vim.opt.eventignore:append('OptionSet')
   local opts_restore = {}
   for opt, val in pairs(opts) do
-    opts_restore[opt] = vim.opt[opt]
-    vim.opt[opt] = val
-  end
-  if not optionset_is_ignored then
-    vim.opt.eventignore:remove('OptionSet')
-  end
-
-  func()
-
-  -- Reset options to previous values (without triggering OptionSet).
-  -- This needs to be scheduled, possibly due to textlock
-  vim.schedule(function()
-    if not optionset_is_ignored then
-      vim.opt.eventignore:append('OptionSet')
+    if vim.opt[opt] ~= val then
+      opts_restore[opt] = vim.opt[opt]
+      vim.opt[opt] = val
     end
+  end
+  vim.opt.eventignore = prev_eventignore
+
+  local return_val = callback(...)
+
+  local has_been_reset = false
+  local reset_opts = function()
+    if has_been_reset then return end
+    vim.opt.eventignore:append('OptionSet')
     for opt, val in pairs(opts_restore) do
       vim.opt[opt] = val
     end
-    if not optionset_is_ignored then
-      vim.opt.eventignore:remove('OptionSet')
+    vim.opt.eventignore = prev_eventignore
+    has_been_reset = true
+  end
+
+  -- Schedule resetting options until it is safe
+  -- (this should happen after func has finished)
+  vim.schedule(function()
+    -- Wait to reset options if in operator-pending mode
+    if is_in_op_pend() then
+      local op_pend_group = vim.api.nvim_create_augroup('shifty_operator_pending_reset', { clear = true })
+      vim.api.nvim_create_autocmd('ModeChanged', {
+        group = op_pend_group,
+        pattern = 'no*',
+        callback = vim.schedule_wrap(function()
+          if not is_in_op_pend() then
+            reset_opts()
+            pcall(vim.api.nvim_del_augroup_by_id, op_pend_group)
+            pcall(vim.cmd, [[IndentBlanklineRefresh]])
+          end
+        end)
+      })
+    else
+      reset_opts()
     end
   end)
-end
 
-local feedkeys = function(keys)
-  keys = vim.api.nvim_replace_termcodes(keys, true, false, true)
-  vim.api.nvim_feedkeys(keys, 'n', false)
+  return return_val
 end
 
 local make_callback = function(rhs, is_expr)
-  local callback
-  if type(rhs) == 'function' then
-    if not is_expr then
-      callback = function() return rhs end
-    else
-      callback = function() feedkeys(rhs()) end
-    end
-  elseif type(rhs) == 'string' then
+  local callback = rhs
+  if type(rhs) == 'string' then
     if not is_expr then
       callback = function()
-        local count = ''
-        if vim.v.count == vim.v.count1 then
-          count = vim.v.count
-        end
-        feedkeys(count .. rhs)
+        return rhs
       end
     else
-      callback = function() feedkeys(vim.api.nvim_eval(rhs)) end
+      callback = function()
+        return vim.api.nvim_eval(rhs)
+      end
     end
   end
 
   return function()
-    with_opts(M.get_opts(), callback)
+    return with_opts(M.get_opts(), callback)
   end
 end
 
-M.get_opts = function(use_ts)
+M.get_opts = function()
   local merged_opts = M.get_ft_opts(vim.bo.filetype)
 
-  if use_ts ~= false then
-    local ok, parser = pcall(vim.treesitter.get_parser)
-    if ok then
-      local line = vim.api.nvim_win_get_cursor(0)[1] - 1
-      local maxcol = vim.api.nvim_get_current_line():len()
-      local lang = parser:language_for_range({ line, 0, line, maxcol }):lang() or {}
-      lang = config.embedded.ts_to_ft[lang] or lang
-      merged_opts = vim.tbl_extend(
-        'force',
-        merged_opts,
-        config.by_ft[lang] or {}
-      )
-    end
+  local ok, parser = pcall(vim.treesitter.get_parser)
+  if ok then
+    local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local maxcol = vim.api.nvim_get_current_line():len()
+    local lang = parser:language_for_range({ line, 0, line, maxcol }):lang() or {}
+    lang = config.embedded.ts_to_ft[lang] or lang
+    merged_opts = vim.tbl_extend(
+      'force',
+      merged_opts,
+      config.by_ft[lang] or {}
+    )
   end
 
   return {
@@ -146,7 +165,7 @@ M.setup = function(user_config)
         softtabstop = opts.softtabstop or opts.sts or nil,
       }
     else
-      warn("Specification for filetype `%s` should be a number or a table, ignoring")
+      warn("Specification for filetype `%s` should be a number or a table, ignoring", ft)
       user_config.by_ft[ft] = nil
     end
   end
@@ -172,7 +191,10 @@ M.setup = function(user_config)
       for _, mode in ipairs(modes) do
         local prev = vim.fn.maparg(lhs, mode, false, true)
         if prev.buffer == 1 then
-          goto continue
+          vim.keymap.del(mode, lhs, { buffer = true })
+          local global_prev = vim.fn.maparg(lhs, mode, false, true)
+          vim.fn.mapset(mode, false, prev)
+          prev = global_prev
         end
 
         local rhs = prev.callback or prev.rhs or lhs
@@ -182,12 +204,17 @@ M.setup = function(user_config)
           remap = prev.noremap == 0 or nil,
           script = prev.script == 1 or nil,
           nowait = prev.nowait == 1 or nil,
+          desc = 'shifty.nvim override for ' .. lhs,
         }
+
+        if type(rhs) == 'string' and prev.expr or 0 == 0 then
+          map_opts.remap = false
+          map_opts.expr = true
+        end
 
         local callback = make_callback(rhs, prev.expr == 1)
         vim.keymap.set(mode, lhs, callback, map_opts)
       end
-      ::continue::
     end
   end
 end
