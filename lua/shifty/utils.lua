@@ -42,8 +42,16 @@ M.is_in_op_pend = function()
   return mode:sub(1, 2) == 'no'
 end
 
+M.msg = function(level, msg, ...)
+  vim.notify(msg:format(...), level, { title = 'shifty.nvim' })
+end
+
+M.error = function(msg, ...)
+  M.msg(vim.log.levels.ERROR, msg, ...)
+end
+
 M.warn = function(msg, ...)
-  vim.notify(msg:format(...), vim.log.levels.WARN, { title = 'shifty.nvim' })
+  M.msg(vim.log.levels.WARN, msg, ...)
 end
 
 M.warn_both_specified = function(long, short, ft)

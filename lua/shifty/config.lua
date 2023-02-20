@@ -12,21 +12,23 @@ M.default = {
   embedded = {
     enabled = true,
     mappings = {
-      -- NOTE: These include `<<` and `>>`
+      -- NOTE: These include `<<`, `>>` and '=='
       ['<'] = { 'n', 'x' },
       ['>'] = { 'n', 'x' },
+      ['='] = { 'n', 'x' },
+
+      ['<C-D>'] = 'i',
+      ['<C-T>'] = 'i',
+      ['<C-F>'] = 'i',
 
       ['<Tab>'] = 'i',
       ['<C-I>'] = 'i',
-      ['<C-T>'] = 'i',
-      ['<C-D>'] = 'i',
-
-      ['<BS>'] = 'i',
+      ['<BS>']  = 'i',
       ['<C-H>'] = 'i',
 
-      ['<CR>'] = 'i',
       ['o'] = 'n',
       ['O'] = 'n',
+      ['<CR>'] = 'i',
     },
     ts_to_ft = {}
   },
